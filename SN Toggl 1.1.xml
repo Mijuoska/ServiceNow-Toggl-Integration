@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<unload unload_date="2021-11-03 19:44:37">
+<sys_update_set action="INSERT_OR_UPDATE">
+<application display_value="Global">global</application>
+<base_update_set display_value=""/>
+<completed_by display_value="System Administrator">6816f79cc0a8016401c5a33be04be441</completed_by>
+<completed_on>2021-11-03 19:44:21</completed_on>
+<description/>
+<install_date>2021-01-08 16:58:33</install_date>
+<installed_from/>
+<is_default>false</is_default>
+<merged_to display_value=""/>
+<name>SN Toggl Integration</name>
+<origin_sys_id/>
+<parent display_value=""/>
+<release_date/>
+<remote_sys_id display_value="SN Toggl Integration">12ce80322fd310109a34206df699b6cb</remote_sys_id>
+<state>complete</state>
+<sys_created_by>admin</sys_created_by>
+<sys_created_on>2021-01-08 16:57:59</sys_created_on>
+<sys_id>fcd300da2f6d2010e137d6ab2799b655</sys_id>
+<sys_mod_count>3</sys_mod_count>
+<sys_updated_by>admin</sys_updated_by>
+<sys_updated_on>2021-11-03 19:44:21</sys_updated_on>
+</sys_update_set>
+</unload>
