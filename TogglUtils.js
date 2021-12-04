@@ -9,7 +9,10 @@ TogglUtils.prototype = {
             }
         }
 
+        this.logger = new GSLog('sn_toggl.log.level', 'TogglUtils');
+
     },
+	
 
     userHasAccount: function() {
         var account = new GlideRecord('u_toggl_account');
@@ -21,16 +24,20 @@ TogglUtils.prototype = {
     },
 
     dataSyncEnabled: function() {
-        return this.account.u_sync_data;
+        return this.userHasActiveAcccount() && this.account.u_sync_data;
     },
 
     twoWaySyncEnabled: function() {
-        return this.account.u_two_way_sync;
+        return this.userHasActiveAcccount() && this.account.u_two_way_sync;
     },
 
     timeEntrySyncEnabled: function() {
-        return this.account.u_sync_time_entries;
+        return this.userHasActiveAcccount() && this.account.u_sync_time_entries;
     },
+	
+	/**
+	*   Fetch API token for a Toggl account matching the given credentials
+	**/ 
 
     connectToToggl: function(username, password) {
         var decrypted = new GlideEncrypter().decrypt(password);
@@ -43,8 +50,7 @@ TogglUtils.prototype = {
             var result = this._handleResponse(response);
             return result;
         } catch (ex) {
-            gs.addErrorMessage('Something went wrong while connecting to Toggl');
-            gs.debug('Something went wrong while connecting to Toggl: ' + ex);
+            this._handleErrors('Something went wrong while connecting to Toggl', ex);
         }
     },
 
@@ -52,28 +58,33 @@ TogglUtils.prototype = {
     syncWorkspaces: function() {
         var r = new sn_ws.RESTMessageV2('Toggl Workspaces', 'Default GET');
         r.setRequestHeader('Authorization', this._setAuthHeader());
-        var response = r.execute();
-        var workspaces = this._handleResponse(response);
-        var ws = new GlideRecord('u_toggl_workspaces');
-        var workspaceArr = [];
+        try {
+            var response = r.execute();
+            var workspaces = this._handleResponse(response);
+            var ws = new GlideRecord('u_toggl_workspaces');
+            var workspaceArr = [];
 
-        ws.initialize();
-        for (var w in workspaces) {
-            if (ws.get('u_id', workspaces[w].id)) {
-                ws.get('u_id', workspaces[w].id);
-            }
-            ws.u_account = this.account.getUniqueValue();
-            ws.u_id = workspaces[w].id;
-            ws.u_name = workspaces[w].name;
-            if (JSUtil.notNil(ws.sys_id)) {
-                ws.update();
-            } else {
-                ws.insert();
-            }
+            ws.initialize();
+            for (var w in workspaces) {
+                if (ws.get('u_id', workspaces[w].id)) {
+                    ws.get('u_id', workspaces[w].id);
+                }
+                ws.u_account = this.account.getUniqueValue();
+                ws.u_id = workspaces[w].id;
+                ws.u_name = workspaces[w].name;
+                if (JSUtil.notNil(ws.sys_id)) {
+                    ws.update();
+                } else {
+                    ws.insert();
+                }
 
+
+            }
             gs.addInfoMessage('Successfully synced Toggl workspace ' + workspaces[w].id);
             gs.info('Successfully synced Toggl workspace ' + workspaces[w].id);
             workspaceArr.push(workspaces[w].id.toString());
+        } catch (ex) {
+            this._handleErrors('Something went wrong while connecting to Toggl', ex);
         }
 
         return workspaceArr;
@@ -90,6 +101,7 @@ TogglUtils.prototype = {
         return wsArr;
     },
 
+	
 
     syncClients: function(wid) {
         var clients = new GlideRecord('u_toggl_clients');
@@ -106,7 +118,7 @@ TogglUtils.prototype = {
                 clients.u_name = clientData[c].name;
                 clients.u_id = clientData[c].id;
                 clients.u_wid = wid;
-                clients.u_workspace = this._getRecordByRefID(wid, 'u_toggl_workspaces');
+                clients.u_workspace = this._getSysIDForRefID(wid, 'u_toggl_workspaces');
                 if (JSUtil.nil(clients.sys_id)) {
                     clients.insert();
                 } else {
@@ -118,7 +130,7 @@ TogglUtils.prototype = {
             gs.addInfoMessage(successMessage);
             gs.info(successMessage);
         } catch (ex) {
-            gs.error('An error occurred with syncing Toggl clients: ' + ex);
+            this._handleErors('An error occurred with syncing Toggl clients', ex);
         }
 
     },
@@ -140,10 +152,10 @@ TogglUtils.prototype = {
                 projects.u_id = projectData[p].id;
                 projects.u_name = projectData[p].name;
                 projects.u_cid = projectData[p].cid;
-                projects.u_client = this._getRecordByRefID(projects.u_cid, 'u_toggl_clients');
+                projects.u_client = this._getSysIDForRefID(projects.u_cid, 'u_toggl_clients');
                 projects.u_active = projectData[p].active;
                 projects.u_wid = wid;
-                projects.u_workspace = this._getRecordByRefID(wid, 'u_toggl_workspaces');
+                projects.u_workspace = this._getSysIDForRefID(wid, 'u_toggl_workspaces');
                 if (JSUtil.nil(projects.sys_id)) {
                     projects.insert();
                 } else {
@@ -156,10 +168,16 @@ TogglUtils.prototype = {
             gs.info(successMessage);
 
         } catch (ex) {
-            gs.debug('An error occurred with syncing Toggl projects: ' + ex);
+            this._handleErrors('An error occurred with syncing Toggl projects', ex);
         }
     },
 
+	/**
+	* Syncs changes to a Toggl resource (Client, Project) from ServiceNow to Toggl.
+	@param ObjectGR {GlideRecord} Toggl object record
+	@param operation {String} The name of the operation (Create, Update, Delete);
+	**/
+	
     syncTogglObject: function(objectGR, operation) {
         var objectName = this._getObjectName(objectGR);
         var r = new sn_ws.RESTMessageV2('Toggl ' + objectName + 's', operation + ' ' + objectName);
@@ -194,12 +212,15 @@ TogglUtils.prototype = {
             gs.addInfoMessage(operation + 'd ' + objectName + ' ' + objectGR.u_name + ' in Toggl');
             return this._handleResponse(response);
         } catch (ex) {
-            gs.addErrorMessage('Something went wrong with the operation');
-            gs.error('Something went wrong operation ' + operation + ' ' + objectName + ': ' + ex);
+            this._handleErrors('Something went wrong operation ' + operation + ' ' + objectName, ex);
 
         }
 
     },
+	
+	/**
+	* Creates a Toggl resource (Client, Project) in Toggl from ServiceNow if it doesn't exist
+	**/
 
     createObjectIfDoesNotExist: function(tableName) {
         var objectGR = new GlideRecord(tableName);
@@ -237,11 +258,11 @@ TogglUtils.prototype = {
                 gs.error('Fetching Toggl ' + objectName + ' failed with status code ' + status);
             }
         } catch (ex) {
-            gs.addErrorMessage('Something went wrong with connecting to Toggl');
-            gs.error('Something went wrong with connecting to Toggl: ' + ex);
+            this._handleErrors('Something went wrong with connecting to Toggl', ex);
         }
     },
 
+	
 
     syncTimeEntries: function(startdate, enddate) {
         var r = new sn_ws.RESTMessageV2('Toggl Time Entries', 'Get Entries');
@@ -260,14 +281,17 @@ TogglUtils.prototype = {
                 if (timeEntry.get('u_id', entries[e].id)) {
                     timeEntry.get('u_id', entries[e].id);
                 }
-                timeEntry.u_description = entries[e].description;
-                timeEntry.u_id = entries[e].id;
-                timeEntry.u_wid = entries[e].wid;
-                timeEntry.u_pid = entries[e].pid;
+                timeEntry.u_description = entries[e].description + '';
+                timeEntry.u_id = entries[e].id + '';
+                timeEntry.u_wid = entries[e].wid + '';
+                timeEntry.u_pid = entries[e].pid + '';
                 timeEntry.u_start = this._convertToGlideDate(entries[e].start);
                 timeEntry.u_stop = this._convertToGlideDate(entries[e].stop);
+                if (JSUtil.notNil(timeEntry.u_stop)) {
+                    timeEntry.u_active = false;
+                }
                 timeEntry.u_duration = new GlideDuration(entries[e].duration * 1000);
-                timeEntry.u_project = this._getRecordByRefID(timeEntry.u_pid, 'u_toggl_projects');
+                timeEntry.u_project = this._getSysIDForRefID(timeEntry.u_pid, 'u_toggl_projects');
                 if (JSUtil.nil(timeEntry.sys_id)) {
                     timeEntry.insert();
                 } else {
@@ -281,31 +305,29 @@ TogglUtils.prototype = {
             gs.info(successMessage);
 
         } catch (ex) {
-            gs.addErrorMessage('An error occurred with syncing entries');
-            gs.error('Error with syncing entries: ' + ex);
+            this._handleErrors('An error occurred with syncing entries', ex);
         }
 
     },
 
 
-    startTimer: function(task, description, projectGR) {
-        if (this.timerIsRunningForTask(task)) {
+    startTimer: function(gr, description, projectGR) {
+        if (this.timerIsRunningForTask(gr)) {
             gs.addErrorMessage('There is an already running time entry for this task');
             return;
         }
         var body = {};
         body['time_entry'] = {};
         var fields = gs.getProperty('sn_toggl.default.time.entry.description').split(',');
-        if (JSUtil.nil(description)) {
+        if (JSUtil.nil(description) && new TableUtils(gr.getTableName()).getAbsoluteBase() == 'task') {
             description = "";
             fields.forEach(function(field) {
-                description += task[field] + " ";
+                description += gr[field] + " ";
             });
         }
         body.time_entry['description'] = description;
         body.time_entry['pid'] = JSUtil.notNil(projectGR.u_id) ? projectGR.u_id + "" : "";
         body.time_entry['created_with'] = 'ServiceNow';
-
 
         var r = new sn_ws.RESTMessageV2('Toggl Time Entries', 'Start Timer');
         r.setRequestHeader('Authorization', this._setAuthHeader());
@@ -314,14 +336,13 @@ TogglUtils.prototype = {
             var response = r.executeAsync();
             var result = this._handleResponse(response);
             if (!result['error']) {
-                this.createTimeEntry(task, result);
+                this.createTimeEntry(gr, result);
                 return result;
             } else {
                 gs.addErrorMessage('Something went wrong with starting the timer');
             }
         } catch (ex) {
-            gs.addErrorMessage('Something went wrong with starting the timer');
-            gs.debug(ex);
+            this._handleErrors('Something went wrong with starting the timer', ex);
         }
 
     },
@@ -339,8 +360,7 @@ TogglUtils.prototype = {
                 return result;
             }
         } catch (ex) {
-            gs.addErrorMessage('Something went wrong with stopping the timer');
-            gs.error("Something went wrong with stopping the timer " + ex);
+            this._handleErrors('Something went wrong with stopping the timer', ex);
         }
 
 
@@ -352,28 +372,25 @@ TogglUtils.prototype = {
         r.setRequestHeader('Authorization', this._setAuthHeader());
         try {
             var response = r.executeAsync();
-            gs.log('Response ' + response);
             var result = this._handleResponse(response);
-            gs.log('Result ' + result);
 
             return result;
         } catch (ex) {
-            gs.addErrorMessage('Something went wrong with polling the timer');
-            gs.error("Something went wrong with polling the timer " + ex);
+            this._handleErrors('Something went wrong with polling the timer', ex);
         }
     },
 
-    createTimeEntry: function(task, result) {
+    createTimeEntry: function(gr, result) {
         var timeEntry = new GlideRecord('u_time_entries');
         timeEntry.initialize();
-        timeEntry.u_id = result.data.id;
-        timeEntry.u_description = result.data.description;
-        timeEntry.u_wid = result.data.wid;
-        timeEntry.u_pid = result.data.pid;
-        timeEntry.u_project = this._getRecordByRefID(timeEntry.u_pid, 'u_toggl_projects');
+        timeEntry.u_id = result.data.id + '';
+        timeEntry.u_description = result.data.description + '';
+        timeEntry.u_wid = result.data.wid + '';
+        timeEntry.u_pid = result.data.pid + '';
+        timeEntry.u_project = this._getSysIDForRefID(timeEntry.u_pid, 'u_toggl_projects');
         timeEntry.u_start = this._convertToGlideDate(result.data.start);
         timeEntry.u_active = true;
-        timeEntry.u_task = task.sys_id;
+        timeEntry.u_task = gr.getUniqueValue();
         timeEntry.insert();
         gs.addInfoMessage('Timer started');
     },
@@ -394,9 +411,9 @@ TogglUtils.prototype = {
     },
 
 
-    getActiveTimeEntryForTask: function(task) {
+    getActiveTimeEntryForTask: function(gr) {
         var timeEntry = new GlideRecord('u_time_entries');
-        timeEntry.addQuery('u_task.sys_id', task.sys_id);
+        timeEntry.addQuery('u_task', gr.sys_id);
         timeEntry.addQuery('u_active', true);
         timeEntry.query();
         if (timeEntry.next()) {
@@ -459,13 +476,14 @@ TogglUtils.prototype = {
     },
 
 
-
-
-    _getRecordByRefID: function(refID, table) {
+    _getSysIDForRefID: function(refID, table) {
         var gr = new GlideRecord(table);
         if (JSUtil.notNil(refID)) {
-            gr.get('u_id', refID.toString());
-            return gr.getUniqueValue();
+            if (gr.get('u_id', refID.toString())) {
+                return gr.getUniqueValue();
+            } else {
+                return null;
+            }
         }
     },
 
@@ -486,14 +504,16 @@ TogglUtils.prototype = {
         if (body && statusCode == '200') {
             return JSON.parse(body);
         } else {
-            gs.error('Error connecting to Toggl. Status code ' + statusCode);
-            gs.addErrorMessage('Something went wrong with connecting to Toggl');
-            return {
-                'error': statusCode
-            };
-
+            var message = 'Error connecting to Toggl. Status code: ' + statusCode + ', response body: ' + body;
+            this._handleErrors(message);
         }
 
+    },
+
+    _handleErrors: function(message, exception) {
+        var logOutput = exception ? message + ': ' + exception : message;
+        this.logger.logErr(logOutput);
+        gs.addErrorMessage(message);
     },
 
     _convertToGlideDate: function(date) {
@@ -507,6 +527,7 @@ TogglUtils.prototype = {
         var ms = gdt.getNumericValue();
         return new Date(ms).toISOString();
     },
+
 
 
     type: 'TogglUtils'
